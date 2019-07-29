@@ -79,8 +79,7 @@ impl<N: NodeId + 'static> NodeMembership<N> {
     }
 
     /// Returns the currently known group members.
-    pub fn group(&self) -> Vec<N> {
-        // FIXME
-        Vec::new()
+    pub fn group(&self) -> &Vec<N> {
+        self.graph.group()
     }
 }

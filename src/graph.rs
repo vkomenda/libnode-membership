@@ -126,6 +126,10 @@ where
     events: Vec<Event<N>>,
     /// A mapping of event hashes to indices of the corresponding events in `events`.
     indices: BTreeMap<Hash, usize>,
+    /// The cached state of group membership.
+    ///
+    /// TODO
+    group: Vec<N>,
 }
 
 impl<N> Default for Graph<N>
@@ -136,6 +140,7 @@ where
         Self {
             events: Vec::new(),
             indices: BTreeMap::new(),
+            group: Vec::new(),
         }
     }
 }
@@ -149,9 +154,21 @@ where
         Self::default()
     }
 
+    pub fn group(&self) -> &Vec<N> {
+        &self.group
+    }
+
     /// Gets the index of an event with the given hash.
     pub fn get_index(&self, hash: &Hash) -> Option<usize> {
         self.indices.get(hash).cloned()
+    }
+
+    /// Gets the hash of an event with the given index.
+    pub fn get_hash(&self, index: usize) -> Option<&Hash> {
+        self.indices
+            .iter()
+            .find(|(_, v)| **v == index)
+            .map(|(h, _)| h)
     }
 
     /// Checks whether this graph contains an event with the given hash.
@@ -199,6 +216,58 @@ where
             queue: iter::once(event).collect(),
         }
     }
+
+    /// Gets all self-children of `event`. Self-children are those events in which the self-parent
+    /// is `event`.
+    ///
+    /// Complexity: O(n) where n is the number of events in the graph.
+    pub fn self_children<'a>(&'a self, event: EventRef<'a, N>) -> Vec<EventRef<'a, N>> {
+        // Find the hash of `event`.
+        if let Some(hash) = self.get_hash(event.index) {
+            self.events
+                .iter()
+                .enumerate()
+                // Check whether `event` is the self-parent of `event0`.
+                .filter(|(_, event0)| event0.self_parent() == Some(hash))
+                .map(|(index, event0)| EventRef {
+                    event: event0,
+                    index,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Checks whether `event1` _sees_ `event2` in the graph.
+    ///
+    /// Complexity: O(m * n) where n is the number of events in the graph and m is the maximum
+    /// number of self-children of an event in the graph.
+    pub fn sees<'a>(&'a self, event1: EventRef<'a, N>, event2: EventRef<'a, N>) -> bool {
+        let is_ancestor = self.ancestors(event1.clone()).any(|e| e == event2);
+        let event2_self_parent = self.get_by_index(event2.index);
+        if !is_ancestor {
+            return false;
+        }
+        if let Some(parent) = event2_self_parent {
+            let children = self.self_children(parent);
+            if children.len() > 1
+                && children
+                    .into_iter()
+                    .all(|child| self.ancestors(event1.clone()).any(|e| e == child))
+            {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Checks whether `event1` _strongly sees_ `event2` in the graph.
+    pub fn strongly_sees<'a>(&'a self, _event1: EventRef<'a, N>, _event2: EventRef<'a, N>) -> bool {
+        let num_nodes = self.group.len();
+        // TODO
+        false
+    }
 }
 
 /// The state of an iterator over the ancestors of an `Event` in a `Graph`.
@@ -219,8 +288,8 @@ impl<'a, N: NodeId + 'a> Iterator for AncestorIter<'a, N> {
                 .and_then(|hash| self.graph.get_by_hash(hash))
                 .map(|parent| self.queue.push_front(parent))
         };
-        add_parent(event.other_parent());
         add_parent(event.self_parent());
+        add_parent(event.other_parent());
         Some(event)
     }
 }
